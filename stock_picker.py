@@ -1333,7 +1333,7 @@ if run_scan:
         prog_bar.empty()
         progress_text.empty()
 
-        results.sort(key=lambda x: x['종합점수'], reverse=True)
+        results.sort(key=lambda x: x['SmartScore'], reverse=True)
         st.session_state.picker_result = results[:top_n]
         st.success(f"✅ 분석 완료! {len(results)}개 종목 중 상위 {min(top_n, len(results))}개 선별")
 
@@ -1400,7 +1400,7 @@ if st.session_state.picker_result:
     sel_idx = ticker_options.index(selected_opt)
     sel = results_list[sel_idx]
     sel_ind = sel['_indicators']
-    final_sc = sel['종합점수']
+    final_sc = sel['SmartScore']
 
     # 관심 종목 북마크
     col_h1, col_h2, col_h3 = st.columns([3, 1, 1])
