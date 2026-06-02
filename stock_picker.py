@@ -275,149 +275,99 @@ def get_stock_universe(market="전체", min_mktcap=500, min_trade=10):
     """KRX 전 종목 리스트에서 기본 필터링.
     1차: FinanceDataReader
     2차: 네이버 모바일 API
-    3차: pykrx
     """
     errors = []
+    final_df = None
 
     # ── 1차 시도: FinanceDataReader ──
     try:
         df = fdr.StockListing('KRX')
-        if df is None or df.empty:
-            raise ValueError("빈 응답")
-        df['시가총액(억)'] = df['Marcap'] / 1e8
-        df['거래대금(억)'] = df['Amount'] / 1e8
+        if df is not None and not df.empty:
+            df['시가총액(억)'] = df['Marcap'] / 1e8
+            df['거래대금(억)'] = df['Amount'] / 1e8
+            if market == "KOSPI":
+                df = df[df['Market'] == 'KOSPI']
+            elif market == "KOSDAQ":
+                df = df[df['Market'] == 'KOSDAQ']
 
-        if market == "KOSPI":
-            df = df[df['Market'] == 'KOSPI']
-        elif market == "KOSDAQ":
-            df = df[df['Market'] == 'KOSDAQ']
-
-        df = df[
-            (df['시가총액(억)'] >= min_mktcap) &
-            (df['거래대금(억)'] >= min_trade) &
-            (df['Close'] > 0)
-        ].copy()
-
-        if df.empty:
-            raise ValueError("필터 후 빈 결과")
-
-        df = df.sort_values('거래대금(억)', ascending=False).head(300)
-        return df
-
+            df = df[
+                (df['시가총액(억)'] >= min_mktcap) &
+                (df['거래대금(억)'] >= min_trade) &
+                (df['Close'] > 0)
+            ].copy()
+            if not df.empty:
+                final_df = df
     except Exception as e:
         errors.append(f"FDR: {e}")
 
     # ── 2차 폴백: 네이버 모바일 API ──
-    try:
-        import requests as _req
+    if final_df is None:
+        try:
+            import requests as _req
+            mkts = []
+            if market in ("전체", "KOSPI"):  mkts.append("KOSPI")
+            if market in ("전체", "KOSDAQ"): mkts.append("KOSDAQ")
 
-        mkts = []
-        if market in ("전체", "KOSPI"):  mkts.append("KOSPI")
-        if market in ("전체", "KOSDAQ"): mkts.append("KOSDAQ")
+            frames = []
+            for mkt in mkts:
+                for page in range(1, 6):   # 최대 500종목 (100×5)
+                    try:
+                        url = (
+                            f"https://m.stock.naver.com/api/stocks/marketValue/{mkt}"
+                            f"?page={page}&pageSize=100"
+                        )
+                        res = _req.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
+                        data = res.json()
+                        stocks = data.get('stocks', [])
+                        if not stocks:
+                            break
 
-        frames = []
-        for mkt in mkts:
-            for page in range(1, 6):   # 최대 500종목 (100×5)
-                try:
-                    url = (
-                        f"https://m.stock.naver.com/api/stocks/marketValue/{mkt}"
-                        f"?page={page}&pageSize=100"
-                    )
-                    res = _req.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
-                    data = res.json()
-                    stocks = data.get('stocks', [])
-                    if not stocks:
+                        for s in stocks:
+                            try:
+                                close  = float((s.get('closePrice') or '0').replace(',', ''))
+                                mktcap = float((s.get('marketValue') or '0').replace(',', '')) / 100
+                                trade  = float((s.get('accumulatedTradingValue') or '0').replace(',', '')) / 100
+                                if close <= 0 or mktcap <= 0:
+                                    continue
+                                frames.append({
+                                    'Code': s.get('itemCode', ''),
+                                    'Name': s.get('stockName', ''),
+                                    'Market': mkt,
+                                    'Close': close,
+                                    '시가총액(억)': mktcap,
+                                    '거래대금(억)': trade,
+                                })
+                            except Exception:
+                                continue
+                    except Exception as pe:
+                        errors.append(f"Naver {mkt} p{page}: {pe}")
                         break
 
-                    for s in stocks:
-                        try:
-                            close  = float((s.get('closePrice') or '0').replace(',', ''))
-                            # marketValue / accumulatedTradingValue 단위: 백만원 → 억 (/100)
-                            mktcap = float((s.get('marketValue') or '0').replace(',', '')) / 100
-                            trade  = float((s.get('accumulatedTradingValue') or '0').replace(',', '')) / 100
-                            if close <= 0 or mktcap <= 0:
-                                continue
-                            frames.append({
-                                'Code': s.get('itemCode', ''),
-                                'Name': s.get('stockName', ''),
-                                'Market': mkt,
-                                'Close': close,
-                                '시가총액(억)': mktcap,
-                                '거래대금(억)': trade,
-                            })
-                        except Exception:
-                            continue
-                except Exception as pe:
-                    errors.append(f"Naver {mkt} p{page}: {pe}")
-                    break
+            if frames:
+                combined = pd.DataFrame(frames)
+                combined = combined[
+                    (combined['시가총액(억)'] >= min_mktcap) &
+                    (combined['거래대금(억)'] >= min_trade) &
+                    (combined['Close'] > 0)
+                ].copy()
+                if not combined.empty:
+                    final_df = combined.sort_values('거래대금(억)', ascending=False).head(300)
+            if final_df is None:
+                errors.append("Naver: 수집된 종목 없음")
+        except Exception as e:
+            errors.append(f"Naver: {e}")
 
-        if frames:
-            combined = pd.DataFrame(frames)
-            combined = combined[
-                (combined['시가총액(억)'] >= min_mktcap) &
-                (combined['거래대금(억)'] >= min_trade) &
-                (combined['Close'] > 0)
-            ].copy()
-            if not combined.empty:
-                return combined.sort_values('거래대금(억)', ascending=False).head(300)
+    # ── 공통: 섹터 매핑 적용 ──
+    if final_df is not None and not final_df.empty:
+        try:
+            df_desc = fdr.StockListing('KRX-DESC')[['Code', 'Sector']]
+            final_df = pd.merge(final_df, df_desc, on='Code', how='left')
+            final_df['Sector'] = final_df['Sector'].fillna('기타')
+        except:
+            final_df['Sector'] = '기타'
+        return final_df
 
-        errors.append("Naver: 수집된 종목 없음 또는 필터 후 빈 결과")
-
-    except Exception as e:
-        errors.append(f"Naver: {e}")
-
-    # ── 3차 폴백: pykrx ──
-    try:
-        raise Exception("pykrx fallback removed")
-        today = datetime.now().strftime('%Y%m%d')
-
-        if market == "KOSPI":
-            tickers = _krx.get_market_ticker_list(today, market="KOSPI")
-            mkt_label = "KOSPI"
-        elif market == "KOSDAQ":
-            tickers = _krx.get_market_ticker_list(today, market="KOSDAQ")
-            mkt_label = "KOSDAQ"
-        else:
-            tickers = (
-                _krx.get_market_ticker_list(today, market="KOSPI") +
-                _krx.get_market_ticker_list(today, market="KOSDAQ")
-            )
-            mkt_label = "전체"
-
-        if not tickers:
-            raise ValueError("종목 리스트 비어있음")
-
-        cap_df = _krx.get_market_cap_by_ticker(today)
-        if cap_df is None or cap_df.empty:
-            raise ValueError("시가총액 데이터 없음")
-
-        cap_df = cap_df[cap_df.index.isin(tickers)].copy()
-        cap_df['시가총액(억)'] = cap_df['시가총액'] / 1e8
-        cap_df['거래대금(억)'] = cap_df['거래대금'] / 1e8
-        cap_df['Code'] = cap_df.index
-        cap_df['Name'] = [_krx.get_market_ticker_name(t) for t in cap_df.index]
-        cap_df['Market'] = mkt_label
-        cap_df['Close'] = cap_df['종가'] if '종가' in cap_df.columns else 1
-
-        result = cap_df[
-            (cap_df['시가총액(억)'] >= min_mktcap) &
-            (cap_df['거래대금(억)'] >= min_trade) &
-            (cap_df['Close'] > 0)
-        ][['Code', 'Name', 'Market', 'Close', '시가총액(억)', '거래대금(억)']].copy()
-
-        if result.empty:
-            raise ValueError("필터 후 빈 결과")
-
-        return result.sort_values('거래대금(억)', ascending=False).head(300)
-
-    except Exception as e:
-        errors.append(f"pykrx: {e}")
-
-    # ── 모든 소스 실패 ──
-    st.error(
-        "⚠️ 주식 데이터를 가져올 수 없습니다.\n\n"
-        + "\n".join(f"• {e}" for e in errors)
-    )
+    st.error(f"종목을 가져오는데 실패했습니다. (사유: {errors})")
     return pd.DataFrame()
 
 
