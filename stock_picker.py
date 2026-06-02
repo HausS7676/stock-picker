@@ -51,7 +51,7 @@ from datetime import datetime, timedelta
 
 import pandas as pd
 import numpy as np
-from pykrx import stock
+
 import streamlit as st
 import plotly.graph_objects as go
 import plotly.express as px
@@ -368,7 +368,7 @@ def get_stock_universe(market="전체", min_mktcap=500, min_trade=10):
 
     # ── 3차 폴백: pykrx ──
     try:
-        from pykrx import stock as _krx
+        raise Exception("pykrx fallback removed")
         today = datetime.now().strftime('%Y%m%d')
 
         if market == "KOSPI":
@@ -427,13 +427,42 @@ def get_stock_universe(market="전체", min_mktcap=500, min_trade=10):
 def get_ohlcv(ticker, base_date, days=300):
     """OHLCV 데이터 로드"""
     try:
+        from pykrx import stock
         end = datetime.strptime(base_date, '%Y%m%d')
         start = end - timedelta(days=days)
         df = stock.get_market_ohlcv_by_date(
             start.strftime('%Y%m%d'), end.strftime('%Y%m%d'), ticker)
-        return df
+        if not df.empty:
+            return df
     except:
+        pass
+        
+    try:
+        import requests
+        import pandas as pd
+        from io import StringIO
+        url = f"https://finance.naver.com/item/sise_day.naver?code={ticker}"
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        dfs = []
+        pages = (days // 10) + 2
+        for page in range(1, pages):
+            r = requests.get(f"{url}&page={page}", headers=headers, timeout=5)
+            df = pd.read_html(StringIO(r.text), encoding='euc-kr')[0].dropna()
+            if df.empty:
+                break
+            dfs.append(df)
+            
+        df = pd.concat(dfs, ignore_index=True)
+        df['날짜'] = pd.to_datetime(df['날짜'])
+        for col in ['종가', '시가', '고가', '저가', '거래량']:
+            df[col] = df[col].astype(float)
+        df = df.set_index('날짜').sort_index()
+        end_date = pd.to_datetime(base_date, format='%Y%m%d')
+        df = df[df.index <= end_date]
+        return df.tail(days)
+    except Exception as e:
         return pd.DataFrame()
+
 
 
 @st.cache_data(ttl=3600)
@@ -441,7 +470,7 @@ def get_investor_flow(ticker, base_date, days=20):
     """투자자별 순매수 데이터"""
     # ── 1차 시도: pykrx ──
     try:
-        from pykrx import stock
+        
         end = datetime.strptime(base_date, '%Y%m%d')
         start = end - timedelta(days=days * 2)
         df = stock.get_market_trading_value_by_date(
@@ -513,10 +542,30 @@ def get_market_condition(base_date):
         end = datetime.strptime(base_date, '%Y%m%d')
         start = end - timedelta(days=60)
         df_kospi = stock.get_index_ohlcv(start.strftime('%Y%m%d'), end.strftime('%Y%m%d'), "1001")
-        
         if df_kospi.empty or len(df_kospi) < 20:
+            raise Exception("Fallback to Naver")
+    except:
+        try:
+            import requests
+            import pandas as pd
+            from io import StringIO
+            url = "https://finance.naver.com/sise/sise_index_day.naver?code=KOSPI"
+            headers = {'User-Agent': 'Mozilla/5.0'}
+            dfs = []
+            for page in range(1, 15):
+                r = requests.get(f"{url}&page={page}", headers=headers, timeout=5)
+                df = pd.read_html(StringIO(r.text), encoding='euc-kr')[0].dropna()
+                dfs.append(df)
+            df = pd.concat(dfs, ignore_index=True)
+            df['날짜'] = pd.to_datetime(df['날짜'])
+            df['종가'] = df['체결가'].astype(float)
+            df_kospi = df.set_index('날짜').sort_index()
+            end_dt = pd.to_datetime(base_date, format='%Y%m%d')
+            df_kospi = df_kospi[df_kospi.index <= end_dt]
+        except:
             return "보합장"
             
+    try:
         close = df_kospi['종가']
         pct_change = close.pct_change() * 100
         
@@ -538,6 +587,7 @@ def get_market_condition(base_date):
         return "보합장"
     except:
         return "보합장"
+
 
 @st.cache_data(ttl=3600)
 def get_sector_dict():
