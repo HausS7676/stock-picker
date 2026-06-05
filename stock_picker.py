@@ -324,9 +324,9 @@ def get_stock_universe(market="전체", min_mktcap=500, min_trade=10):
 
                         for s in stocks:
                             try:
-                                close  = float((s.get('closePrice') or '0').replace(',', ''))
-                                mktcap = float((s.get('marketValue') or '0').replace(',', '')) / 100
-                                trade  = float((s.get('accumulatedTradingValue') or '0').replace(',', '')) / 100
+                                close = float(s.get('closePriceRaw') or 0)
+                                mktcap = float(s.get('marketValueRaw') or 0) / 1e8
+                                trade = float(s.get('accumulatedTradingValueRaw') or 0) / 1e8
                                 if close <= 0 or mktcap <= 0:
                                     continue
                                 frames.append({
@@ -345,13 +345,21 @@ def get_stock_universe(market="전체", min_mktcap=500, min_trade=10):
 
             if frames:
                 combined = pd.DataFrame(frames)
-                combined = combined[
-                    (combined['시가총액(억)'] >= min_mktcap) &
-                    (combined['거래대금(억)'] >= min_trade) &
-                    (combined['Close'] > 0)
-                ].copy()
-                if not combined.empty:
-                    final_df = combined.sort_values('거래대금(억)', ascending=False).head(300)
+                if combined['거래대금(억)'].max() == 0:
+                    combined = combined[
+                        (combined['시가총액(억)'] >= min_mktcap) &
+                        (combined['Close'] > 0)
+                    ].copy()
+                    if not combined.empty:
+                        final_df = combined.sort_values('시가총액(억)', ascending=False).head(300)
+                else:
+                    combined = combined[
+                        (combined['시가총액(억)'] >= min_mktcap) &
+                        (combined['거래대금(억)'] >= min_trade) &
+                        (combined['Close'] > 0)
+                    ].copy()
+                    if not combined.empty:
+                        final_df = combined.sort_values('거래대금(억)', ascending=False).head(300)
             if final_df is None:
                 errors.append("Naver: 수집된 종목 없음")
         except Exception as e:
