@@ -383,40 +383,34 @@ def get_stock_universe(market="전체", min_mktcap=500, min_trade=10, full_scan=
 
 
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=3600, max_entries=500)
 def get_ohlcv(ticker, base_date, days=300):
-    """OHLCV 데이터 로드"""
-    try:
-        from pykrx import stock
-        end = datetime.strptime(base_date, '%Y%m%d')
-        start = end - timedelta(days=days)
-        df = stock.get_market_ohlcv_by_date(
-            start.strftime('%Y%m%d'), end.strftime('%Y%m%d'), ticker)
-        if not df.empty:
-            return df
-    except:
-        pass
-        
+    """OHLCV 데이터 로드 (고속 JSON API)"""
     try:
         import requests
+        import json
+        from datetime import datetime, timedelta
         import pandas as pd
-        from io import StringIO
-        url = f"https://finance.naver.com/item/sise_day.naver?code={ticker}"
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        dfs = []
-        pages = (days // 10) + 2
-        for page in range(1, pages):
-            r = requests.get(f"{url}&page={page}", headers=headers, timeout=5)
-            df = pd.read_html(StringIO(r.text), encoding='euc-kr')[0].dropna()
-            if df.empty:
-                break
-            dfs.append(df)
-            
-        df = pd.concat(dfs, ignore_index=True)
+        
+        end_time = datetime.strptime(base_date, '%Y%m%d')
+        start_time = end_time - timedelta(days=days + 150) # 휴일 감안하여 넉넉히
+        
+        url = f"https://api.finance.naver.com/siseJson.naver?symbol={ticker}&requestType=1&startTime={start_time.strftime('%Y%m%d')}&endTime={end_time.strftime('%Y%m%d')}&timeframe=day"
+        r = requests.get(url, timeout=5)
+        
+        text = r.text.strip()
+        text = text.replace("'", '"').replace('\\n', '').replace('\\t', '')
+        data = json.loads(text)
+        
+        columns = data[0]
+        rows = data[1:]
+        df = pd.DataFrame(rows, columns=columns)
+        df.rename(columns={'날짜': '날짜', '시가': '시가', '고가': '고가', '저가': '저가', '종가': '종가', '거래량': '거래량'}, inplace=True)
         df['날짜'] = pd.to_datetime(df['날짜'])
-        for col in ['종가', '시가', '고가', '저가', '거래량']:
-            df[col] = df[col].astype(float)
-        df = df.set_index('날짜').sort_index()
+        df = df.set_index('날짜')
+        for col in ['시가', '고가', '저가', '종가', '거래량']:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+            
         end_date = pd.to_datetime(base_date, format='%Y%m%d')
         df = df[df.index <= end_date]
         return df.tail(days)
@@ -425,7 +419,7 @@ def get_ohlcv(ticker, base_date, days=300):
 
 
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=3600, max_entries=500)
 def get_investor_flow(ticker, base_date, days=20):
     """투자자별 순매수 데이터"""
     # ── 1차 시도: pykrx ──
