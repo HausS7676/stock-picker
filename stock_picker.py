@@ -271,7 +271,7 @@ def get_latest_valid_date():
 ########################################
 
 @st.cache_data(ttl=1800)
-def get_stock_universe(market="전체", min_mktcap=500, min_trade=10):
+def get_stock_universe(market="전체", min_mktcap=500, min_trade=10, full_scan=False):
     """KRX 전 종목 리스트에서 기본 필터링.
     1차: FinanceDataReader
     2차: 네이버 모바일 API
@@ -310,7 +310,7 @@ def get_stock_universe(market="전체", min_mktcap=500, min_trade=10):
 
             frames = []
             for mkt in mkts:
-                for page in range(1, 6):   # 최대 500종목 (100×5)
+                for page in range(1, 25 if full_scan else 6):
                     try:
                         url = (
                             f"https://m.stock.naver.com/api/stocks/marketValue/{mkt}"
@@ -351,7 +351,8 @@ def get_stock_universe(market="전체", min_mktcap=500, min_trade=10):
                         (combined['Close'] > 0)
                     ].copy()
                     if not combined.empty:
-                        final_df = combined.sort_values('시가총액(억)', ascending=False).head(300)
+                        final_df = combined.sort_values('시가총액(억)', ascending=False)
+                        if not full_scan: final_df = final_df.head(300)
                 else:
                     combined = combined[
                         (combined['시가총액(억)'] >= min_mktcap) &
@@ -359,7 +360,8 @@ def get_stock_universe(market="전체", min_mktcap=500, min_trade=10):
                         (combined['Close'] > 0)
                     ].copy()
                     if not combined.empty:
-                        final_df = combined.sort_values('거래대금(억)', ascending=False).head(300)
+                        final_df = combined.sort_values('거래대금(억)', ascending=False)
+                        if not full_scan: final_df = final_df.head(300)
             if final_df is None:
                 errors.append("Naver: 수집된 종목 없음")
         except Exception as e:
@@ -1163,6 +1165,7 @@ with st.sidebar:
     st.markdown("**📊 결과 설정**")
     top_n = st.slider("상위 종목 수", 5, 50, 20)
     analysis_days = st.selectbox("수급 분석 기간", [10, 20, 30], index=1)
+    full_scan = st.checkbox("🔥 전 종목 스캔 (약 10~20분 소요)", value=False, help="체크 시 코스피/코스닥 전 종목을 스캔합니다. 네트워크 요청이 많아 매우 오래 걸릴 수 있습니다.")
 
     st.markdown("---")
     st.markdown("**⏳ 스윙 기간 선택**")
@@ -1202,7 +1205,7 @@ if run_scan:
     st.info(f"📊 **현재 KOSPI 장세 판별:** {market_cond}")
 
     with st.spinner('📡 종목 유니버스 로딩 중...'):
-        universe = get_stock_universe(market_choice, min_mktcap, min_trade)
+        universe = get_stock_universe(market_choice, min_mktcap, min_trade, full_scan)
 
     if universe.empty:
         st.error("종목 데이터를 불러올 수 없습니다.")
@@ -1210,7 +1213,7 @@ if run_scan:
         progress_text = st.empty()
         prog_bar = st.progress(0)
         results = []
-        total = min(len(universe), top_n * 3)
+        total = len(universe) if full_scan else min(len(universe), top_n * 3)
 
         for i, (_, row) in enumerate(universe.head(total).iterrows()):
             ticker = row['Code']
