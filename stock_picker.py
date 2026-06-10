@@ -460,9 +460,9 @@ def get_investor_flow(ticker, base_date, days=20):
         
         # 데이터 클렌징
         dfclean['날짜'] = pd.to_datetime(dfclean['날짜_날짜'], format='%Y.%m.%d', errors='coerce')
-        dfclean['종가_종가'] = pd.to_numeric(dfclean['종가_종가'], errors='coerce')
-        dfclean['기관_순매매량'] = pd.to_numeric(dfclean['기관_순매매량'], errors='coerce')
-        dfclean['외국인_순매매량'] = pd.to_numeric(dfclean['외국인_순매매량'], errors='coerce')
+        dfclean['종가_종가'] = pd.to_numeric(dfclean['종가_종가'].astype(str).str.replace(',', ''), errors='coerce')
+        dfclean['기관_순매매량'] = pd.to_numeric(dfclean['기관_순매매량'].astype(str).str.replace(',', ''), errors='coerce')
+        dfclean['외국인_순매매량'] = pd.to_numeric(dfclean['외국인_순매매량'].astype(str).str.replace(',', ''), errors='coerce')
         
         dfclean = dfclean.dropna(subset=['날짜'])
         
@@ -1087,7 +1087,7 @@ def render_candle_chart(df, ticker_name, ticker):
 
     fig = go.Figure()
     fig.add_trace(go.Candlestick(
-        x=df.index, open=df['시가'], high=df['고가'],
+        x=df.index.strftime('%Y-%m-%d '), open=df['시가'], high=df['고가'],
         low=df['저가'], close=df['종가'], name='캔들',
         increasing_line_color='#ef4444', decreasing_line_color='#3b82f6',
         increasing_fillcolor='#ef4444', decreasing_fillcolor='#3b82f6',
@@ -1101,7 +1101,7 @@ def render_candle_chart(df, ticker_name, ticker):
     ]
     for ma_data, color, name in ma_styles:
         fig.add_trace(go.Scatter(
-            x=df.index, y=ma_data, mode='lines',
+            x=df.index.strftime('%Y-%m-%d '), y=ma_data, mode='lines',
             line=dict(color=color, width=1.5), name=name
         ))
 
